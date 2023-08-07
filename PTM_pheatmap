@@ -1,0 +1,263 @@
+---
+title: "PTM pheatmap"
+author: "Christopher Solis"
+date: "10/06/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Packages
+```{r, include=FALSE}
+#install.packages(tidyverse) # in case it needs to be installed
+library(tidyverse) # tidyverse has dplyr, tidyr, ggplot2
+
+# Set working directory
+Dir = dirname(rstudioapi::getSourceEditorContext()$path) 
+setwd(Dir)
+getwd()
+```
+
+
+## 1. Type file names
+```{r}
+# Type file name here:
+MyFileName1 <- 'Chem-aactinin_ptmprofile_Tr2vsTr1-Tr3vsTr1.csv'
+MyFileName2 <- 'Mech-aactinin_ptmprofile_Tr2vsTr1-Tr3vsTr1.csv'
+
+# Load sequence (Uniprot: https://www.uniprot.org)
+SeqFile <- 'NP_001163796.1.txt'
+
+```
+
+## 2. Load the data
+```{r}
+# FUnctions 
+sym_diff <- function(a,b) setdiff(union(a,b), intersect(a,b))
+
+# Begin
+PTMList1 <- read_csv(MyFileName1)
+PTMList1 <- data.frame(PTMList1)
+PTMList2 <- read_csv(MyFileName2)
+PTMList2 <- data.frame(PTMList2)
+#combine two lists
+
+# find PTM site that exist across all the treatments
+#Positions1 <- unique(PTMList1$Position)
+#Positions2 <- unique(PTMList2$Position)
+
+Positions1 <- intersect(pull(filter(PTMList1,Treatment=="OM/UT"),var= PTMID),
+                        pull(filter(PTMList1,Treatment=="Mava/UT"),var= PTMID))
+
+Positions2 <- intersect(pull(filter(PTMList2,Treatment=="F/UF"),var= PTMID),
+                        pull(filter(PTMList2,Treatment=="F-UF/UF"),var= PTMID))
+
+Positions <- intersect(Positions1, Positions2)
+#Positions <-as.numeric(gsub(".*?([0-9]+).*", "\\1", Positions)) # WOW COOL
+
+PTMList <- rbind(PTMList1,PTMList2)
+PTMList <- as.data.frame(PTMList)
+# Set the columm "Treatment" as a factor
+#PTMList$Treatment <- factor(PTMList$Treatment, levels=unique(PTMList$Treatment[order(PTMList$Treatment)]))
+#head(PTMList)
+
+PTMList <- PTMList %>% subset(PTMID %in% Positions) 
+
+ChemLoad <- PTMList%>% filter(Treatment == "OM/UT") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid) #%>% t()
+ChemUnload <- PTMList%>% filter(Treatment == "Mava/UT") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid) #%>% t()
+MechLoad <- PTMList%>% filter(Treatment == "F/UF") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid) #%>% t()
+MechUnload <- PTMList%>% filter(Treatment == "F-UF/UF") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid) #%>% t()
+
+# Define the column and row names.
+Colnames = ChemLoad$Position
+Rownames = c("OM/UT", "Mava/UT", "F/UF","F-UF/UF")
+
+# Create the matrix.
+P <- matrix(c(ChemLoad$log2.fold.change,ChemUnload$log2.fold.change,MechLoad$log2.fold.change,MechUnload$log2.fold.change), 
+            nrow = length(Rownames), 
+            byrow = TRUE, dimnames = list(Rownames, Colnames))
+
+# Adjust extreme points to make heat map color palett be symetrical in zero
+for (i in 1:length(P)) {
+          if (P[i] >3.0) {
+                P[i] <- 3.0 
+        }
+}
+
+# Generate annotations for rows and columns
+Annotation_col = data.frame(
+  Modification = factor(ChemLoad$Modifications), 
+  AminoAcid = factor(ChemLoad$AminoAcid)
+)
+rownames(Annotation_col) = paste(ChemLoad$Position)
+
+# Load pretty heat map package ()
+library(pheatmap)
+
+Plot <- pheatmap(P,
+         cluster_cols = FALSE, 
+         cluster_rows = FALSE,
+         border_color = "black",
+         color = hcl.colors(50, "RdBu", rev = TRUE,fixup = TRUE),#[c(-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12,-13,-14,-15)],
+         cellheight = 40,
+         gaps_col = c(2,6),
+         annotation_col = Annotation_col,
+         main = "Modifications shared by all the conditions")
+
+ggsave(filename = paste(substr(MyFileName1,1,nchar(MyFileName1)-4),"_ChemMechModifications.pdf",sep=""),plot = Plot)
+```
+4. Symmetric difference of (disjunctive union) F/UF and F-UF/UF
+```{r}
+
+DiffPositions <- sym_diff(Positions2,Positions1)
+#DiffPositions <-as.numeric(gsub(".*?([0-9]+).*", "\\1", DiffPositions))   
+#DiffPositions <- intersect(DiffPositions, Positions1)
+
+PTMList <- rbind(PTMList1,PTMList2)
+#PTMList <- as.data.frame(PTMList)
+PTMList <- PTMList %>% subset(PTMID %in% DiffPositions) 
+
+MechLoad <- PTMList%>% filter(Treatment == "F/UF") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid)
+MechUnload <- PTMList%>% filter(Treatment == "F-UF/UF") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid) 
+
+# Define the column and row names.
+Colnames = MechLoad$Position
+Rownames = c("F/UF","F-UF/UF")
+
+# Create the matrix.
+P <- matrix(c(MechLoad$log2.fold.change,MechUnload$log2.fold.change), 
+            nrow = length(Rownames), 
+            byrow = TRUE, dimnames = list(Rownames, Colnames))
+
+# Adjust extreme points to make heat map color palett be symetrical in zero
+for (i in 1:length(P)) {
+          if (P[i] < -4.5) {
+                P[i] <- -4.5 
+        }
+}
+
+# Generate annotations for rows and columns
+Annotation_col = data.frame(
+  Modification = factor(MechLoad$Modifications), 
+  AminoAcid = factor(MechLoad$AminoAcid)
+)
+
+Positions_edited <- paste(MechLoad$Position)
+Positions_edited[16] <- 366.2
+
+#rownames(Annotation_col) = paste(MechLoad$Position)
+rownames(Annotation_col) = Positions_edited
+
+
+Plot2 <- pheatmap(P,
+         cluster_cols = FALSE, 
+         cluster_rows = FALSE,
+         border_color = "black",
+         color = hcl.colors(50, "RdBu", rev = TRUE,fixup = TRUE),
+         cellheight = 20,
+         gaps_col = c(10,22),
+         annotation_col = Annotation_col,
+         main = "Modifications exclusive to mechanical loading/unloading")
+
+ggsave(filename = paste(substr(MyFileName2,1,nchar(MyFileName2)-4),"_MechModifications.pdf",sep=""),plot = Plot2)
+
+```
+
+## 4. Symmetric difference of (disjunctive union) OM/UT and Mava/UT 
+```{r}
+DiffPositions <- sym_diff(Positions2,Positions1)
+#Positions <-as.numeric(gsub(".*?([0-9]+).*", "\\1", Positions)) # WOW COOL
+
+PTMList <- rbind(PTMList1,PTMList2)
+PTMList <- as.data.frame(PTMList)
+# Set the columm "Treatment" as a factor
+#PTMList$Treatment <- factor(PTMList$Treatment, levels=unique(PTMList$Treatment[order(PTMList$Treatment)]))
+#head(PTMList)
+
+PTMList <- PTMList %>% subset(PTMID %in% DiffPositions) 
+ChemLoad <- PTMList%>% filter(Treatment == "OM/UT") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid)
+ChemUnload <- PTMList%>% filter(Treatment == "Mava/UT") %>% select(Treatment,log2.fold.change,Position,Modifications,AminoAcid) 
+
+DiffPositions <- intersect(ChemLoad$Position,ChemUnload$Position)
+ChemLoad <- ChemLoad %>% subset(Position %in% DiffPositions) 
+ChemUnload <- ChemUnload %>% subset(Position %in% DiffPositions) 
+
+Colnames = ChemLoad$Position
+Rownames = c("OM/UT","Mava/UT")
+
+# Create the matrix.
+P <- matrix(c(ChemLoad$log2.fold.change,ChemUnload$log2.fold.change), 
+            nrow = length(Rownames), 
+            byrow = TRUE, dimnames = list(Rownames, Colnames))
+
+
+# Adjust extreme points to make heat map color palett be symetrical in zero
+for (i in 1:length(P)) {
+          if (P[i] < -4.0) {
+                P[i] <- -4.0 
+        }
+}
+
+# Generate annotations for rows and columns
+Annotation_col = data.frame(
+  Modification = factor(ChemLoad$Modifications), 
+  AminoAcid = factor(ChemLoad$AminoAcid)
+)
+
+rownames(Annotation_col) = paste(ChemLoad$Position)
+#rownames(Annotation_col) = Positions_edited
+
+3
+Plot2 <- pheatmap(P,
+         cluster_cols = FALSE, 
+         cluster_rows = FALSE,
+         border_color = "black",
+         color = hcl.colors(50, "RdBu", rev = TRUE,fixup = TRUE),
+         cellheight = 70,
+         gaps_col = c(3),
+         annotation_col = Annotation_col,
+         main = "Modifications exclusive to chemical loading/unloading")
+
+ggsave(filename = paste(substr(MyFileName2,1,nchar(MyFileName2)-4),"_ChemModifications.pdf",sep=""),plot = Plot2)
+
+
+
+```
+##. 4. Add unmodified residues
+```{r}
+
+#SeqFile <- read.delim(SeqFile, header = TRUE, sep = "\t")
+SeqFile <- read.delim(SeqFile, header = TRUE)
+SeqFile <- do.call(paste, c(SeqFile, collapse = ""))
+
+Ks <- unlist(gregexpr('K', SeqFile))
+Ss <- unlist(gregexpr('S', SeqFile))
+Ts <- unlist(gregexpr('T', SeqFile))
+Ys <- unlist(gregexpr('Y', SeqFile))
+
+# Regions of alphac-actinin-2:
+#Red: 0-260 (actin-binding domain)
+#Yellow: 261-283 (EF hand binding domain/peptide)
+#Green: 284-750 (4 spectrin-like domains)
+#Magenta: 827-892 (EF hand-1)
+#Blue: 751-826  (EF hand-2)
+```
+
+## 8. Clean up environment
+```{r}
+# Clear environment
+rm(list = ls()) 
+# Clear packages
+detach("package:datasets", unload = TRUE)  # For base
+# Clear plots
+#dev.off()  # But only if there IS a plot
+# Clear console
+cat("\014")  # ctrl+L
+# Clear mind :)
+```
+
+
